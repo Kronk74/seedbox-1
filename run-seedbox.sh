@@ -11,6 +11,37 @@ check_utilities
 SKIP_PULL=0
 DEBUG=0
 
+echo "[$0] ***** Checking required tools... *****"
+REQUIRED_TOOLS=("docker" "docker-compose" "yq" "jq")
+
+for tool in "${REQUIRED_TOOLS[@]}"; do
+  if ! command -v $tool &> /dev/null; then
+    echo "[$0] ERROR: $tool is not installed. Please install $tool and try again."
+    exit 1
+  fi
+done
+
+# Check if versions of required tools are correct
+check_version() {
+  local tool=$1
+  local required_version=$2
+  local current_version=$($tool --version | grep -oP '\d+\.\d+')
+  if [[ $(echo -e "$current_version\n$required_version" | sort -V | head -n1) != "$required_version" ]]; then
+    echo "[$0] ERROR: $tool version $required_version or higher is required. Current version is $current_version."
+    exit 1
+  fi
+}
+
+# Define required versions for each tool
+declare -A REQUIRED_VERSIONS
+REQUIRED_VERSIONS=( ["docker"]="20.10" ["docker-compose"]="1.29" ["yq"]="4.6" ["jq"]="1.6" )
+
+# Check versions
+echo "[$0] ***** Checking version of required tools... *****"
+for tool in "${!REQUIRED_VERSIONS[@]}"; do
+  check_version $tool ${REQUIRED_VERSIONS[$tool]}
+done
+
 for i in "$@"; do
   case $i in
     --no-pull)
@@ -58,6 +89,7 @@ if [[ ! -f docker-compose.yaml ]]; then
 fi
 
 # Check if there are obsolete config still in .env but should be moved to .env.custom
+echo-debug "[$0] ***** Checking obsolete configs... *****"
 if [[ $(grep "^MYSQL_.*" .env | wc -l) != 0 || $(grep "^WIREGUARD_.*" .env | wc -l) != 0 || $(grep "^NEXTCLOUD_.*" .env | wc -l) != 0 || $(grep "^PORTAINER_.*" .env | wc -l) != 0 || $(grep "^FLOOD_PASSWORD.*" .env | wc -l) != 0 || $(grep "^CALIBRE_PASSWORD.*" .env | wc -l) != 0 || $(grep "^PAPERLESS_.*" .env | wc -l) != 0 ]]; then
   echo "/!\ Some obsolete config has been detected in your .env."
   echo "It should be moved in .env.custom as they apply to specific app (this is new since v2.2 update - see documentation)."
@@ -90,6 +122,7 @@ if [[ $(grep "^MYSQL_.*" .env | wc -l) != 0 || $(grep "^WIREGUARD_.*" .env | wc 
 fi
 
 # Create/update http_auth file according to values in .env file
+echo-debug "[$0] ***** Updating HTTP Auth file... *****"
 source .env
 echo "${HTTP_USER}:${HTTP_PASSWORD}" > traefik/http_auth
 
@@ -101,6 +134,7 @@ fi
 # Input => $1 = app name (exemple traefik)
 # Output => env/app_name.env written with correct variables (exemple: env/traefik.env)
 extract_custom_env_file() {
+  echo-debug "[$0] Extracting custom env file for $1..."
   # sed explanation:
   #   1 => Remove all lines starting with a comment (#)
   #   2 => Remove all empty lines
@@ -110,7 +144,9 @@ extract_custom_env_file() {
 }
 
 ## Traefik Certificate Resolver tweaks
+echo-debug "[$0] ***** Updating Traefik Certificate Resolver... *****"
 if [[ ! -z ${TRAEFIK_CUSTOM_ACME_RESOLVER} ]]; then
+  echo-debug "[$0] Custom ACME resolver detected. Updating Traefik configuration..."
   if [[ ! -f .env.custom ]]; then
     echo "[$0] Error. You need to have a .env.custom in order to use TRAEFIK_CUSTOM_ACME_RESOLVER variable."
     exit 1
@@ -144,8 +180,14 @@ fi
 
 echo "[$0] ***** Checking configuration... *****"
 
-yq eval -o json config.yaml > config.json
+{ # try
+  yq eval -o json config.yaml > config.json
+} || { # catch
+  echo "[$0] ERROR: config.yaml is not a valid YAML file. Please check it and try again."
+  exit 1
+}
 
+echo-debug "[$0] ***** Checking for outdated config... *****"
 if [[ "${CHECK_FOR_OUTDATED_CONFIG}" == true ]]; then
   nb_services=$(cat config.json | jq '.services | length')
   nb_services_sample=$(yq eval -o json config.sample.yaml | jq '.services | length')
@@ -172,17 +214,20 @@ check_result_service() {
 
 # Check if a service ($1) has been enabled in the config file
 is_service_enabled() {
+  echo-debug "[$0] Checking if service $1 is enabled..."
   local nb=$(cat config.json | jq --arg service $1 '[.services[] | select(.name==$service and .enabled==true)] | length')
   check_result_service $1 $nb
 }
 
 # Check if a service ($1) has been enabled AND has vpn enabled in the config file
 has_vpn_enabled() {
+  echo-debug "[$0] Checking if service $1 has VPN enabled..."
   local nb=$(cat config.json | jq --arg service $1 '[.services[] | select(.name==$service and .enabled==true and .vpn==true)] | length')
   check_result_service $1 $nb
 }
 
 # Check if some services have vpn enabled, that gluetun itself is enabled
+echo-debug "[$0] Checking if gluetun is enabled when VPN is enabled for some services..."
 nb_vpn=$(cat config.json | jq '[.services[] | select(.enabled==true and .vpn==true)] | length')
 if [[ ${nb_vpn} -gt 0 ]] && ! is_service_enabled gluetun; then
   echo "[$0] ERROR. ${nb_vpn} VPN-enabled services have been enabled BUT gluetun has not been enabled. Please check your config.yaml file."
@@ -193,6 +238,7 @@ fi
 # => If deluge vpn is enabled => gluetun
 # => If deluge vpn is disabled => deluge
 if is_service_enabled flood; then
+  echo "[$0] Flood is enabled. Checking Deluge status..."
   # Check that if flood is enabled, deluge should also be enabled
   if ! is_service_enabled deluge; then
     echo "[$0] ERROR. Flood is enabled but Deluge is not. Please either enable Deluge or disable Flood as Flood depends on Deluge."
@@ -207,18 +253,21 @@ if is_service_enabled flood; then
 fi
 
 # Check that if calibre-web is enabled, calibre should also be enabled
+echo-debug "[$0] Checking Calibre and Calibre-web status..."
 if is_service_enabled calibre-web && ! is_service_enabled calibre; then
   echo "[$0] ERROR. Calibre-web is enabled but Calibre is not. Please either enable Calibre or disable Calibre-web as Calibre-web depends on Calibre."
   exit 1
 fi
 
 # Check that if nextcloud is enabled, mariadb should also be enabled
+echo-debug "[$0] Checking Nextcloud and MariaDB status..."
 if is_service_enabled nextcloud && ! is_service_enabled mariadb; then
   echo "[$0] ERROR. Nextcloud is enabled but MariaDB is not. Please either enable MariaDB or disable Nextcloud as Nextcloud depends on MariaDB."
   exit 1
 fi
 
 # Apply other arbitrary custom Traefik config files
+echo-debug "[$0] Applying custom Traefik config files..."
 rm -f $f traefik/custom/custom-*
 for f in `find samples/custom-traefik -maxdepth 1 -mindepth 1 -type f | grep -E "\.yml$|\.yaml$" | sort`; do
   echo "[$0] Applying custom Traefik config $f..."
@@ -226,6 +275,7 @@ for f in `find samples/custom-traefik -maxdepth 1 -mindepth 1 -type f | grep -E 
 done
 
 # Detect Synology devices for Netdata compatibility
+echo-debug "[$0] Detecting Synology devices for Netdata compatibility..."
 if is_service_enabled netdata; then
   if [[ $(uname -a | { grep synology || true; } | wc -l) -eq 1 ]]; then
     export OS_RELEASE_FILEPATH="/etc/VERSION"
