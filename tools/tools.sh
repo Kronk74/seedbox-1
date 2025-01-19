@@ -4,6 +4,16 @@
 ############################### UTIL FUNCTIONS ###############################
 ##############################################################################
 
+cleanup_on_exit() {
+  rm -f rules.props *-vpn.props *-envfile.props config.json
+  [[ -d env ]] && rm -f env/*.tmp
+}
+trap cleanup_on_exit EXIT
+
+echo-debug() {
+  if [[ ${DEBUG} == "1" ]]; then echo "$@"; fi
+}
+
 check_utilities () {
   echo "[$0] ***** Checking required tools... *****"
 

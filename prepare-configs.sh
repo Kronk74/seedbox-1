@@ -5,34 +5,6 @@ set -e
 # Load common functions
 source tools/tools.sh
 
-SKIP_PULL=0
-DEBUG=0
-
-for i in "$@"; do
-  case $i in
-    --no-pull)
-      SKIP_PULL=1
-      ;;
-    --debug)
-      DEBUG=1
-      ;;
-    *)
-      echo "[$0] ❌ ERROR: unknown parameter \"$i\""
-      exit 1
-      ;;
-  esac
-done
-
-cleanup_on_exit() {
-  rm -f rules.props *-vpn.props *-envfile.props config.json
-  [[ -d env ]] && rm -f env/*.tmp
-}
-trap cleanup_on_exit EXIT
-
-echo-debug() {
-  if [[ ${DEBUG} == "1" ]]; then echo "$@"; fi
-}
-
 ###############################################################################################
 ####################################### Load variables ########################################
 ###############################################################################################
@@ -508,19 +480,3 @@ echo-debug "[$0] Here is the list of all files which are going to be processed: 
 
 echo "[$0] ***** Config OK. Launching services... *****"
 
-if [[ "${SKIP_PULL}" != "1" ]]; then
-  echo "[$0] ***** Pulling all images... *****"
-  ${DOCKER_COMPOSE_BINARY} ${ALL_SERVICES} pull
-fi
-
-echo "[$0] ***** Recreating containers if required... *****"
-${DOCKER_COMPOSE_BINARY} --env-file ${GLOBAL_ENV_FILE} ${ALL_SERVICES} up -d --remove-orphans
-echo "[$0] ***** Done updating containers *****"
-rm -f .env.concat
-
-echo "[$0] ***** Clean unused images and volumes... *****"
-docker image prune -af
-docker volume prune -f
-
-echo "[$0] ***** Done! *****"
-exit 0
