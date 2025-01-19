@@ -5,9 +5,6 @@ set -e
 # Load common functions
 source tools/tools.sh
 
-# Check that required tools are installed
-check_utilities
-
 SKIP_PULL=0
 DEBUG=0
 
@@ -98,6 +95,9 @@ echo "${HTTP_USER}:${HTTP_PASSWORD}" > traefik/http_auth
 if [[ ! -d env ]]; then
   mkdir -p env
 fi
+
+# Check that required tools are installed
+check_utilities
 
 # Sanitize and extract variable (without prefixes) from .env.custom file
 # Input => $1 = app name (exemple traefik)
@@ -268,6 +268,7 @@ ALL_SERVICES="-f docker-compose.yaml"
 GLOBAL_ENV_FILE=".env"
 
 # Parse the config.yaml master configuration file
+echo-debug "[$0] ***** Parsing the config.yaml master configuration file ... *****"
 for json in $(yq eval -o json config.yaml | jq -c ".services[]"); do
   name=$(echo $json | jq -r .name)
   enabled=$(echo $json | jq -r .enabled)
